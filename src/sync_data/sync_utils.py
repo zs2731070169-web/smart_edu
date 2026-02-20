@@ -109,6 +109,11 @@ class Neo4jWriter:
             cypher = f"""
             CREATE FULLTEXT INDEX {full_index.index_name} IF NOT EXISTS
             FOR (n:{full_index.label}) ON EACH [n.{full_index.property}]
+            OPTIONS {{
+                indexConfig: {{
+                  `fulltext.analyzer`: 'cjk'
+                }}
+            }}
             """
             self.execute_cypher(self.driver, cypher, err_msg="全文索引创建失败")
 

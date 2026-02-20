@@ -1,14 +1,19 @@
+import asyncio
 import logging
+from typing import List, Tuple
 
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import tool
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_neo4j import Neo4jGraph
-from langchain_openai import ChatOpenAI
-from neo4j import GraphDatabase
+from neo4j import Query
+from neo4j.exceptions import CypherSyntaxError
+from neo4j_graphrag.retrievers.text2cypher import extract_cypher
+from pydantic import Field
 
-from agent.prompts import extract_entities_prompt
-from agent.schema import Entities, ExtractEntities
-from config.config import NEO4J_CONFIG, EMBEDDINGS_MODEL, NEWCOIN_CONFIG
+from agent.context import llm_gpt, llm_opus, graph, thread_pool_executor, embedding_model, driver
+from agent.prompts import extract_entities_prompt, gen_cypher_prompt, cypher_validate_prompt
+from agent.schema import EntityPairs, GenCypher, ValidateCypher, Entity, \
+    ValidateCypherResult
+from config.config import NODE_LIST
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,167 +22,310 @@ logging.basicConfig(
 logger = logging.getLogger("RetrievalTools")
 
 
-class Retriever:
+# 获取设备
+# device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    def __init__(self):
-        # 加载neo4j驱动
-        self.driver = GraphDatabase.driver(**NEO4J_CONFIG)
-        logger.info("Neo4j 驱动初始化成功")
-
-        # 加载neo4j图
-        self.graph = Neo4jGraph(
-            url=NEO4J_CONFIG["uri"],
-            username=NEO4J_CONFIG["auth"][0],
-            password=NEO4J_CONFIG["auth"][1]
-        )
-        logger.info("Neo4j 图加载完成")
-
-        # 加载向量模型
-        self.embedding_model = HuggingFaceEmbeddings(
-            model_name=EMBEDDINGS_MODEL,
-            encode_kwargs={"normalize_embeddings": True}
-        )
-        logger.info("embedding 模型加载完成")
-
-        # 获取设备
-        # self.device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        # 加载实体抽取模型
-        # self.nlp_deberta_tokenizer = AutoTokenizer.from_pretrained(NLP_DEBERTA_MODEL)
-        # self.nlp_deberta_model = AutoModelForTokenClassification.from_pretrained(NLP_DEBERTA_MODEL).to(self.device)
-        # self.nlp_deberta_model.eval()
-
-        self.llm_gpt = ChatOpenAI(
-            model="gpt-5.2",
-            base_url=NEWCOIN_CONFIG["url"],
-            api_key=NEWCOIN_CONFIG["api_key"],
-        )
-        logger.info("gpt-5.2 模型加载完成")
-
-        self.llm_opus = ChatOpenAI(
-            model="claude-opus-4-6",
-            base_url=NEWCOIN_CONFIG["url"],
-            api_key=NEWCOIN_CONFIG["api_key"]
-        )
-        logger.info("claude-opus-4-6 模型加载完成")
+# 加载实体抽取模型
+# nlp_deberta_tokenizer = AutoTokenizer.from_pretrained(NLP_DEBERTA_MODEL)
+# nlp_deberta_model = AutoModelForTokenClassification.from_pretrained(NLP_DEBERTA_MODEL).to(device)
+# nlp_deberta_model.eval()
 
 
+@tool(
+    name_or_callable="extract_entities",
+    description="从用户查询里抽取实体，并返回实体和相关图标签列表",
+    return_direct=False
+)
+async def extract_entities(question: str = Field(default="", description="用户问题")) -> EntityPairs:
+    """
+    执行实体抽取工具
+    :param question:
+    :return:
+    """
+    prompt = extract_entities_prompt.invoke({"question": question, "schema": NODE_LIST})
 
-    # @tool(
-    #     name="实体抽取",
-    #     description="从输入的文本中抽取实体，并返回实体列表"
-    # )
-    # def extract_entity(self, question: str) -> str:
-    #     """
-    #     执行实体抽取工具
-    #     :param question:
-    #     :return:
-    #     """
-    #
-    #     # 基础模型加载
-    #     inputs = self.nlp_deberta_tokenizer(
-    #         question,
-    #         padding=True,
-    #         return_tensors="pt"
-    #     )
-    #     # 模型输入加载到GPU
-    #     inputs_tensor = {k: v.to(self.device) for k, v in inputs.items()}
-    #     # 执行模型推理
-    #     with torch.no_grad():
-    #         outputs = self.nlp_deberta_model(**inputs_tensor)
-    #
-    #     print(outputs.logits)
-    #     # 获取模型预测结果
-    #     """
-    #     batch_size:指的是一次模型前向传播中输入的句子数量
-    #     sequence_length:一句话的token数量
-    #     num_labels：每个token的分数列表，维度对齐
-    #     (batch_size=1, sequence_length=4, num_labels=3)
-    #     [
-    #       [   # 第一句话
-    #         [类别1分数, 类别2分数, 类别3分数],  ← token1
-    #         [类别1分数, 类别2分数, 类别3分数],  ← token2
-    #         [类别1分数, 类别2分数, 类别3分数],  ← token3
-    #         [类别1分数, 类别2分数, 类别3分数],  ← token4
-    #       ]
-    #     ]
-    #     (2, 4, 3)
-    #     [
-    #       [  # 第1句话
-    #         [x,x,x],
-    #         [x,x,x],
-    #         [x,x,x],
-    #         [x,x,x],
-    #       ],
-    #       [  # 第2句话
-    #         [x,x,x],
-    #         [x,x,x],
-    #         [x,x,x],
-    #         [x,x,x],
-    #       ]
-    #     ]
-    #     """
-    #     # 获取最后一个维度（每个token的分数列表）的最大分数
-    #     model_predictions = outputs.logits.argmax(dim=-1).tolist()
-    #     final_predictions = []
-    #     entity = ""
-    #     # 遍历输入和预测结果
-    #     for tokens, prediction in zip(question, model_predictions[0]):
-    #         if 0 not in model_predictions[0]:
-    #             final_predictions.append(entity)
-    #         elif prediction == 1:
-    #             entity += tokens
-    #         elif prediction == 0:
-    #             final_predictions.append(entity)
-    #             entity = ""
-    #
-    #
-    #     print(final_predictions)
+    if not graph.get_structured_schema['node_props']:
+        return EntityPairs()
 
-    @tool(
-        name_or_callable="实体抽取",
-        description="从输入的文本中抽取实体，并返回实体列表和相关图标签",
-        return_direct=False,
-        args_schema=Entities
+    llm_output = (llm_gpt
+                  .with_structured_output(schema=EntityPairs)
+                  .invoke(prompt))
+
+    logger.info(f"实体抽取结果: {llm_output.entity_pairs}")
+
+    return llm_output.entity_pairs
+
+@tool(
+    name_or_callable="entities_align_async",
+    description="通过混合检索进行实体对齐，并返回对齐后的实体和标签对列表",
+    args_schema=EntityPairs,
+    return_direct=False,
+)
+async def entities_align_async(entity_pairs: EntityPairs) -> List[Tuple[str, str]]:
+    """
+    实体对齐工具
+    :param entity_pairs:
+    :return:
+    """
+    if not entity_pairs:
+        logger.info(f"实体: {entity_pairs}无需对齐")
+        return []
+
+    # 分别获取实体列表和标签列表
+    entity_pairs = [(entity_pair.entity, entity_pair.label) for entity_pair in entity_pairs]
+    entities, labels = zip(*entity_pairs)
+
+    # 异步并发执行混合检索
+    hybrid_search_results = await asyncio.gather(*[
+        asyncio.wrap_future(
+            thread_pool_executor.submit(
+                _search_entity, entity=entity, label=label, top_k=1
+            )
+        ) for entity, label in zip(entities, labels)
+    ])
+
+    # 收集对齐后的实体列表
+    aligned_entities = [
+        (result[0]['text'], result[0]['labels'][0])
+        for result in hybrid_search_results
+        if hybrid_search_results and hybrid_search_results[0]
+    ]
+
+    logger.info(f"实体对齐结果: {aligned_entities}")
+
+    return aligned_entities
+
+
+def _search_entity(entity: str,
+                   label: str,
+                   top_k: int = 3,
+                   alpha: float = 0.5,
+                   threshold: float = 0.5
+                   ) -> list:
+    """
+    对单个实体进行线性混合检索
+    :param entity: 实体文本
+    :param label: 实体标签，用于确定检索索引
+    :param top_k: 返回结果数量
+    :param alpha: 向量检索权重，全文检索权重为 (1 - alpha)
+    :return: 检索结果列表
+    """
+    # 生成实体向量
+    query_vector = embedding_model.embed_query(entity)
+
+    # 定义索引名称：{label}_vector_index / {label}_fulltext_index
+    label_lower = label.lower()
+    vector_index_name = f"{label_lower}_vector_index"
+    fulltext_index_name = f"{label_lower}_fulltext_index"
+
+    # 使用 get_search_query 构建混合检索 Cypher
+    query = (
+        """
+        CALL {
+            CALL db.index.vector.queryNodes($vector_index_name, $top_k * $effective_search_ratio, $query_vector)
+            YIELD node, score
+            WITH node, score LIMIT $top_k
+            WITH collect({node: node, score: score}) AS nodes
+            UNWIND nodes AS n
+            WITH n.node AS node, n.score AS score
+            RETURN node, score * $alpha AS score
+            UNION
+            CALL db.index.fulltext.queryNodes($fulltext_index_name, $query_text, {limit: $top_k})
+            YIELD node, score
+            WITH collect({node: node, score: score}) AS nodes, max(score) AS ft_index_max_score
+            UNWIND nodes AS n
+            WITH n.node AS node, (n.score / ft_index_max_score) AS rawScore
+            RETURN node, rawScore * (1 - $alpha) AS score
+        }
+        WITH node, sum(score) AS score ORDER BY score DESC LIMIT $top_k
+        RETURN node.`name` AS text, labels(node) AS labels, score, node {.*, `name`: Null, `embedding`: Null, id: Null } AS metadata
+        """
     )
-    def extract_entities(self, question: str) -> str:
-        """
-        执行实体抽取工具
-        :param question:
-        :return:
-        """
-        prompt = extract_entities_prompt.invoke({"question": question, "schema": self.graph.get_structured_schema})
 
-        llm_output = (self.llm_gpt
-                      .with_structured_output(schema=Entities)
-                      .invoke(prompt))
+    # 合并运行时参数
+    run_params = {
+        "vector_index_name": vector_index_name,
+        "query_vector": query_vector,
+        "fulltext_index_name": fulltext_index_name,
+        "query_text": entity,
+        "top_k": top_k,
+        "effective_search_ratio": 1,
+        "alpha": alpha,
+    }
 
-        logger.info(f"实体: {llm_output.entities}, 标签: {llm_output.label}")
+    # 进行混合检索
+    with driver.session() as session:
+        result = session.run(Query(text=query), run_params)
+        records = result.data()
 
-        return llm_output
+    logger.info(f"实体 '{entity}' ({label}) 混合检索结果: {records}")
 
-    @tool(
-        name_or_callable="实体对齐",
-        description="对实体进行对齐，并返回对齐后的实体列表和标签列表",
-        return_direct=False
-    )
-    def entities_align(self, question: str, entities: ExtractEntities):
-        """
-        实体对齐
-        1. 获取实体和标签列表
-        2. 进行异步混合检索
-        3.
-        :param question:
-        :param entities:
-        :param labels:
-        :return:
-        """
+    # 判断检索结果是否达到期望阈值
+    retrieval_records = [record for record in records if record['score'] > threshold]
+
+    return retrieval_records
 
 
+@tool(
+    name_or_callable="gen_cypher",
+    description="根据用户查询和抽取的实体对构建查询Cypher语句",
+    return_direct=False,
+    args_schema=GenCypher
+)
+async def gen_cypher(question: str, entities: List[Entity]) -> str:
+    """
+    构建cypher
+    :param question: 用户查询
+    :param entities: 提取的实体
+    :return: cypher查询语句
+    """
+    # 构建执行链
+    chain = gen_cypher_prompt | llm_opus | StrOutputParser()
+
+    # 生成cypher
+    cypher = chain.invoke({"schema": graph.schema, "entities": entities, "question": question})
+
+    # 精确提取可执行Cypher语句
+    cypher = extract_cypher(cypher)
+    cypher = cypher[cypher.find("MATCH"):].strip()
+
+    logger.info("生成cypher语句:%s" % cypher)
+
+    return cypher
 
 
+@tool(
+    name_or_callable="validate_cypher",
+    description="根据用户查询和原始Cypher语句, 对Cypher语句进行校验",
+    return_direct=False,
+    args_schema=ValidateCypher
+)
+def validate_cypher(cypher: str, question: str, entities: List[Entity]) -> ValidateCypherResult:
+    """
+    校验cypher
+    :param: cypher: cypher语句
+    :param question: 用户查询
+    :param entities: 提取的实体
+    :return: 校验结果
+    """
+    # 校验语法错误
+    errors = ""
+    try:
+        driver.execute_query(query_=f"EXPLAIN {cypher}")
+    except CypherSyntaxError as e:
+        errors = str(e)
+
+    # 创建schema
+    schema = graph.schema
+
+    # 校验提示词
+    prompt = cypher_validate_prompt.format_messages(
+        cypher=cypher, question=question, entities=entities, schema=schema)
+
+    # 执行校验（使用 function_calling 而非 json_schema，避免代理不支持 response_format）
+    llm_output: ValidateCypherResult = llm_opus.with_structured_output(ValidateCypherResult, method="function_calling").invoke(prompt)
+
+    # 将语法错误合并进 LLM 返回的错误列表
+    if errors:
+        llm_output.errors.append({"语法错误": errors})
+        llm_output.is_correct = False
+
+    logger.info(f"Cypher语句校验完成：{llm_output}")
+
+    return llm_output
+
+
+@tool(
+    name_or_callable="query_cypher",
+    description="执行Cypher语句并返回查询结果",
+    return_direct=False
+)
+def query_cypher(cypher: str = Field(default="", description="cypher语句")) -> str:
+    """
+    执行cypher
+    :param: cypher: cypher语句
+    :return: 返回执行结果
+    """
+    results = driver.execute_query(query_=cypher).records
+    logger.info(f"执行Cypher, 返回结果: {results}")
+    return results
 
 
 if __name__ == '__main__':
-    # retriever = Retriever()
-    # retriever.extract_entities("马云创办了阿里巴巴")
+    pass
+    # question = "张老师的大数据和java课程"
+    # llm_output = extract_entities(question)  # 抽取实体
+    # entities = asyncio.run(entities_align(llm_output))  # 实体对齐
+    # cypher = gen_cypher(question, entities)  # 生成cypher
+
+
+# @tool(
+#     name="实体抽取",
+#     description="从输入的文本中抽取实体，并返回实体列表"
+# )
+# def extract_entity(question: str) -> str:
+#     """
+#     执行实体抽取工具
+#     :param question:
+#     :return:
+#     """
+#
+#     # 基础模型加载
+#     inputs = nlp_deberta_tokenizer(
+#         question,
+#         padding=True,
+#         return_tensors="pt"
+#     )
+#     # 模型输入加载到GPU
+#     inputs_tensor = {k: v.to(device) for k, v in inputs.items()}
+#     # 执行模型推理
+#     with torch.no_grad():
+#         outputs = nlp_deberta_model(**inputs_tensor)
+#
+#     print(outputs.logits)
+#     # 获取模型预测结果
+#     """
+#     batch_size:指的是一次模型前向传播中输入的句子数量
+#     sequence_length:一句话的token数量
+#     num_labels：每个token的分数列表，维度对齐
+#     (batch_size=1, sequence_length=4, num_labels=3)
+#     [
+#       [   # 第一句话
+#         [类别1分数, 类别2分数, 类别3分数],  ← token1
+#         [类别1分数, 类别2分数, 类别3分数],  ← token2
+#         [类别1分数, 类别2分数, 类别3分数],  ← token3
+#         [类别1分数, 类别2分数, 类别3分数],  ← token4
+#       ]
+#     ]
+#     (2, 4, 3)
+#     [
+#       [  # 第1句话
+#         [x,x,x],
+#         [x,x,x],
+#         [x,x,x],
+#         [x,x,x],
+#       ],
+#       [  # 第2句话
+#         [x,x,x],
+#         [x,x,x],
+#         [x,x,x],
+#         [x,x,x],
+#       ]
+#     ]
+#     """
+#     # 获取最后一个维度（每个token的分数列表）的最大分数
+#     model_predictions = outputs.logits.argmax(dim=-1).tolist()
+#     final_predictions = []
+#     entity = ""
+#     # 遍历输入和预测结果
+#     for tokens, prediction in zip(question, model_predictions[0]):
+#         if 0 not in model_predictions[0]:
+#             final_predictions.append(entity)
+#         elif prediction == 1:
+#             entity += tokens
+#         elif prediction == 0:
+#             final_predictions.append(entity)
+#             entity = ""
+#
+#
+#     print(final_predictions)
