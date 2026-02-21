@@ -2,17 +2,15 @@ import asyncio
 import logging
 from typing import List, Tuple
 
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import tool
 from neo4j import Query
 from neo4j.exceptions import CypherSyntaxError
-from neo4j_graphrag.retrievers.text2cypher import extract_cypher
 from pydantic import Field
 
-from agent.context import llm_gpt, llm_opus, graph, thread_pool_executor, embedding_model, driver
-from agent.prompts import extract_entities_prompt, gen_cypher_prompt, cypher_validate_prompt
-from agent.schema import EntityPairs, GenCypher, ValidateCypher, Entity, \
-    ValidateCypherResult
+from agent.context import thread_pool_executor, embedding_model, driver, graph_schema, llm_opus, graph, \
+    llm_gpt
+from agent.prompts import cypher_validate_prompt, extract_entities_prompt
+from agent.schema import EntityPairs, Entity, ValidateCypherResult, ValidateCypher
 from config.config import NODE_LIST
 
 logging.basicConfig(
@@ -47,13 +45,14 @@ async def extract_entities(question: str = Field(default="", description="用户
     if not graph.get_structured_schema['node_props']:
         return EntityPairs()
 
-    llm_output = (llm_gpt
-                  .with_structured_output(schema=EntityPairs)
-                  .invoke(prompt))
+    llm_output = await (llm_gpt
+                        .with_structured_output(schema=EntityPairs)
+                        .ainvoke(prompt))
 
     logger.info(f"实体抽取结果: {llm_output.entity_pairs}")
 
     return llm_output.entity_pairs
+
 
 @tool(
     name_or_callable="entities_align_async",
@@ -82,13 +81,14 @@ async def entities_align_async(entity_pairs: EntityPairs) -> List[Tuple[str, str
                 _search_entity, entity=entity, label=label, top_k=1
             )
         ) for entity, label in zip(entities, labels)
+        if label not in ["Teacher", "Student", "Price"]
     ])
 
     # 收集对齐后的实体列表
     aligned_entities = [
         (result[0]['text'], result[0]['labels'][0])
         for result in hybrid_search_results
-        if hybrid_search_results and hybrid_search_results[0]
+        if result  # 过滤掉低于阈值的空检索结果
     ]
 
     logger.info(f"实体对齐结果: {aligned_entities}")
@@ -161,37 +161,37 @@ def _search_entity(entity: str,
     logger.info(f"实体 '{entity}' ({label}) 混合检索结果: {records}")
 
     # 判断检索结果是否达到期望阈值
-    retrieval_records = [record for record in records if record['score'] > threshold]
+    retrieval_records = [record for record in records if record['score'] >= threshold]
 
     return retrieval_records
 
 
-@tool(
-    name_or_callable="gen_cypher",
-    description="根据用户查询和抽取的实体对构建查询Cypher语句",
-    return_direct=False,
-    args_schema=GenCypher
-)
-async def gen_cypher(question: str, entities: List[Entity]) -> str:
-    """
-    构建cypher
-    :param question: 用户查询
-    :param entities: 提取的实体
-    :return: cypher查询语句
-    """
-    # 构建执行链
-    chain = gen_cypher_prompt | llm_opus | StrOutputParser()
-
-    # 生成cypher
-    cypher = chain.invoke({"schema": graph.schema, "entities": entities, "question": question})
-
-    # 精确提取可执行Cypher语句
-    cypher = extract_cypher(cypher)
-    cypher = cypher[cypher.find("MATCH"):].strip()
-
-    logger.info("生成cypher语句:%s" % cypher)
-
-    return cypher
+# @tool(
+#     name_or_callable="gen_cypher",
+#     description="根据用户查询和抽取的实体对构建查询Cypher语句",
+#     return_direct=False,
+#     args_schema=GenCypher
+# )
+# async def gen_cypher(question: str, entities: List[Entity]) -> str:
+#     """
+#     构建cypher
+#     :param question: 用户查询
+#     :param entities: 提取的实体
+#     :return: cypher查询语句
+#     """
+#     # 构建执行链
+#     chain = gen_cypher_prompt | llm_opus | StrOutputParser()
+#
+#     # 生成cypher
+#     cypher = await chain.ainvoke({"schema": graph_schema, "entities": entities, "question": question})
+#
+#     # 精确提取可执行Cypher语句
+#     cypher = extract_cypher(cypher)
+#     cypher = cypher[cypher.find("MATCH"):].strip()
+#
+#     logger.info("生成cypher语句:%s" % cypher)
+#
+#     return cypher
 
 
 @tool(
@@ -200,7 +200,7 @@ async def gen_cypher(question: str, entities: List[Entity]) -> str:
     return_direct=False,
     args_schema=ValidateCypher
 )
-def validate_cypher(cypher: str, question: str, entities: List[Entity]) -> ValidateCypherResult:
+async def validate_cypher(cypher: str, question: str, entities: List[Entity]) -> ValidateCypherResult:
     """
     校验cypher
     :param: cypher: cypher语句
@@ -215,15 +215,14 @@ def validate_cypher(cypher: str, question: str, entities: List[Entity]) -> Valid
     except CypherSyntaxError as e:
         errors = str(e)
 
-    # 创建schema
-    schema = graph.schema
-
     # 校验提示词
     prompt = cypher_validate_prompt.format_messages(
-        cypher=cypher, question=question, entities=entities, schema=schema)
+        cypher=cypher, question=question, entities=entities, schema=graph_schema)
 
     # 执行校验（使用 function_calling 而非 json_schema，避免代理不支持 response_format）
-    llm_output: ValidateCypherResult = llm_opus.with_structured_output(ValidateCypherResult, method="function_calling").invoke(prompt)
+    llm_output: ValidateCypherResult = await (llm_opus
+                                              .with_structured_output(ValidateCypherResult, method="function_calling")
+                                              .ainvoke(prompt))
 
     # 将语法错误合并进 LLM 返回的错误列表
     if errors:
@@ -257,7 +256,6 @@ if __name__ == '__main__':
     # llm_output = extract_entities(question)  # 抽取实体
     # entities = asyncio.run(entities_align(llm_output))  # 实体对齐
     # cypher = gen_cypher(question, entities)  # 生成cypher
-
 
 # @tool(
 #     name="实体抽取",

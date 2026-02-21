@@ -166,7 +166,7 @@ def main():
     parser.add_argument("-m", "--model_path", type=Path, required=True,
                         default='./checkpoint/model_best', help="The path to model parameters to be loaded.")
     parser.add_argument("-o", "--output_path", type=Path, default=None,
-                        help="The path of model parameter in static graph to be saved.")
+                        help="The path of model parameter in web graph to be saved.")
     args = parser.parse_args()
 
     if args.output_path is None:
