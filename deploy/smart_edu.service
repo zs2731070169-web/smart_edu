@@ -1,0 +1,21 @@
+[Unit]
+Description=Smart Edu FastAPI Service
+After=network.target mysql.service neo4j.service
+
+[Service]
+Type=simple
+User=smart_edu
+Group=smart_edu
+WorkingDirectory=/home/smart_edu/app/src
+EnvironmentFile=/home/smart_edu/app/.env
+ExecStart=/home/smart_edu/app/venv/bin/python -m backend.app
+Restart=on-failure
+RestartSec=5s
+
+# 日志输出到 systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=smart_edu
+
+[Install]
+WantedBy=multi-user.target

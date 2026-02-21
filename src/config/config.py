@@ -9,10 +9,16 @@ NEWCOIN_CONFIG = {
     'temperature': 0.5
 }
 
+CLOSEAI_CONFIG = {
+    'url': 'https://api.openai-proxy.org/v1',
+    'api_key': 'sk-mnkQ7J2wxeUEWkOSMC88pbxgCK6apx0blwdpb76h0aPL4qYP',
+    'temperature': 0.5
+}
+
 # 数据库配置
 MYSQL_CONFIG = {
     'host': 'localhost',
-    'port': 3307,
+    'port': 3306,
     'user': 'root',
     'password': '123456',
     'database': 'smart_edu'
@@ -26,7 +32,7 @@ NEO4J_CONFIG = {
 AGENT_WITH_MEMORY = True
 
 # 静态资源配置
-WEB_DIR = ROOT_DIR / "src" / "backend" / "web"
+WEB_DIR = str(ROOT_DIR / "src" / "backend" / "web")
 
 # 模型
 EMBEDDINGS_MODEL = str(ROOT_DIR / "models" / "bge-base-zh-v1.5")

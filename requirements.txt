@@ -1,0 +1,36 @@
+# FastAPI 服务
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+starlette>=0.37.0
+python-multipart>=0.0.9
+
+# LangChain 生态
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-openai>=0.1.0
+langchain-huggingface>=0.0.3
+langchain-neo4j>=0.1.0
+langgraph>=0.1.0
+
+# 数据库驱动
+neo4j>=5.20.0
+pymysql>=1.1.0
+cryptography>=42.0.0
+
+# 向量模型
+sentence-transformers>=3.0.0
+torch>=2.1.0
+transformers>=4.40.0
+
+# UIE 推理
+onnxruntime>=1.17.0
+numpy>=1.26.0
+sentencepiece>=0.2.0
+
+# Session 中间件
+itsdangerous>=2.1.0
+
+# 工具库
+pydantic>=2.7.0
+tqdm>=4.66.0
+packaging>=24.0
