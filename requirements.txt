@@ -21,7 +21,7 @@ cryptography>=42.0.0
 # 向量模型
 sentence-transformers>=3.0.0
 torch>=2.1.0
-transformers>=4.40.0
+transformers==4.54.0
 
 # UIE 推理
 onnxruntime>=1.17.0

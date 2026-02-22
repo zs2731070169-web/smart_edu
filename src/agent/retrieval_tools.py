@@ -40,16 +40,19 @@ async def extract_entities(question: str = Field(default="", description="用户
     :param question:
     :return:
     """
+    logger.info(f"[实体抽取] 入参 question='{question}'")
+
     prompt = extract_entities_prompt.invoke({"question": question, "schema": NODE_LIST})
 
     if not graph.get_structured_schema['node_props']:
+        logger.info("[实体抽取] 图 schema 为空，跳过抽取")
         return EntityPairs()
 
     llm_output = await (llm_gpt
                         .with_structured_output(schema=EntityPairs)
                         .ainvoke(prompt))
 
-    logger.info(f"实体抽取结果: {llm_output.entity_pairs}")
+    logger.info(f"[实体抽取] 结果: {llm_output.entity_pairs}")
 
     return llm_output.entity_pairs
 
@@ -66,13 +69,21 @@ async def entities_align_async(entity_pairs: EntityPairs) -> List[Tuple[str, str
     :param entity_pairs:
     :return:
     """
+    logger.info(f"[实体对齐] 入参 entity_pairs={entity_pairs}")
+
     if not entity_pairs:
-        logger.info(f"实体: {entity_pairs}无需对齐")
+        logger.info("[实体对齐] 实体列表为空，跳过对齐")
         return []
 
     # 分别获取实体列表和标签列表
     entity_pairs = [(entity_pair.entity, entity_pair.label) for entity_pair in entity_pairs]
     entities, labels = zip(*entity_pairs)
+
+    search_targets = [(entity, label)
+                      for entity, label in zip(entities, labels)
+                      if label not in ["Teacher", "Student", "Price"]
+                      ]
+    logger.info(f"[实体对齐] 过滤后待检索实体: {search_targets}")
 
     # 异步并发执行混合检索
     hybrid_search_results = await asyncio.gather(*[
@@ -80,8 +91,7 @@ async def entities_align_async(entity_pairs: EntityPairs) -> List[Tuple[str, str
             thread_pool_executor.submit(
                 _search_entity, entity=entity, label=label, top_k=1
             )
-        ) for entity, label in zip(entities, labels)
-        if label not in ["Teacher", "Student", "Price"]
+        ) for entity, label in search_targets
     ])
 
     # 收集对齐后的实体列表
@@ -91,7 +101,7 @@ async def entities_align_async(entity_pairs: EntityPairs) -> List[Tuple[str, str
         if result  # 过滤掉低于阈值的空检索结果
     ]
 
-    logger.info(f"实体对齐结果: {aligned_entities}")
+    logger.info(f"[实体对齐] 结果: {aligned_entities}")
 
     return aligned_entities
 
@@ -110,6 +120,9 @@ def _search_entity(entity: str,
     :param alpha: 向量检索权重，全文检索权重为 (1 - alpha)
     :return: 检索结果列表
     """
+    logger.info(
+        f"[混合检索] 入参 entity='{entity}', label='{label}', top_k={top_k}, alpha={alpha}, threshold={threshold}")
+
     # 生成实体向量
     query_vector = embedding_model.embed_query(entity)
 
@@ -117,6 +130,7 @@ def _search_entity(entity: str,
     label_lower = label.lower()
     vector_index_name = f"{label_lower}_vector_index"
     fulltext_index_name = f"{label_lower}_fulltext_index"
+    logger.info(f"[混合检索] 使用索引: vector='{vector_index_name}', fulltext='{fulltext_index_name}'")
 
     # 使用 get_search_query 构建混合检索 Cypher
     query = (
@@ -158,10 +172,11 @@ def _search_entity(entity: str,
         result = session.run(Query(text=query), run_params)
         records = result.data()
 
-    logger.info(f"实体 '{entity}' ({label}) 混合检索结果: {records}")
+    logger.info(f"[混合检索] 原始结果({len(records)}条): {records}")
 
     # 判断检索结果是否达到期望阈值
     retrieval_records = [record for record in records if record['score'] >= threshold]
+    logger.info(f"[混合检索] 阈值过滤后({len(retrieval_records)}条): {retrieval_records}")
 
     return retrieval_records
 
@@ -208,12 +223,17 @@ async def validate_cypher(cypher: str, question: str, entities: List[Entity]) ->
     :param entities: 提取的实体
     :return: 校验结果
     """
+    logger.info(f"[Cypher校验] 入参 question='{question}', entities={entities}")
+    logger.info(f"[Cypher校验] 待校验 Cypher: {cypher}")
+
     # 校验语法错误
     errors = ""
     try:
         driver.execute_query(query_=f"EXPLAIN {cypher}")
+        logger.info("[Cypher校验] 语法校验通过")
     except CypherSyntaxError as e:
         errors = str(e)
+        logger.warning(f"[Cypher校验] 语法错误: {errors}")
 
     # 校验提示词
     prompt = cypher_validate_prompt.format_messages(
@@ -229,7 +249,7 @@ async def validate_cypher(cypher: str, question: str, entities: List[Entity]) ->
         llm_output.errors.append({"语法错误": errors})
         llm_output.is_correct = False
 
-    logger.info(f"Cypher语句校验完成：{llm_output}")
+    logger.info(f"[Cypher校验] 结果: is_correct={llm_output.is_correct}, errors={llm_output.errors}")
 
     return llm_output
 
@@ -245,8 +265,9 @@ def query_cypher(cypher: str = Field(default="", description="cypher语句")) ->
     :param: cypher: cypher语句
     :return: 返回执行结果
     """
+    logger.info(f"[图查询] 入参 Cypher: {cypher}")
     results = driver.execute_query(query_=cypher).records
-    logger.info(f"执行Cypher, 返回结果: {results}")
+    logger.info(f"[图查询] 返回 {len(results)} 条结果: {results}")
     return results
 
 

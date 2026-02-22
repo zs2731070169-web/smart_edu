@@ -14,6 +14,9 @@ from config.config import WEB_DIR, SESSION_SECRET_KEY
 
 logging.basicConfig(format="%(asctime)s %(filename)s %(message)s", level=logging.INFO)
 logger = logging.getLogger("Web")
+logging.getLogger("uvicorn.access").addFilter(
+    lambda record: "socket.io" not in record.getMessage()
+)
 
 root_path = "/smart/edu"
 app = FastAPI(root_path=root_path)
