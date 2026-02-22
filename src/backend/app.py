@@ -10,7 +10,7 @@ from starlette.staticfiles import StaticFiles
 
 from backend.schema import UserChat, QuestionReq
 from backend.service import ChatService
-from config.config import WEB_DIR
+from config.config import WEB_DIR, SESSION_SECRET_KEY
 
 logging.basicConfig(format="%(asctime)s %(filename)s %(message)s", level=logging.INFO)
 logger = logging.getLogger("Web")
@@ -24,7 +24,7 @@ app = FastAPI(root_path=root_path)
 # 首次执行session_id为空，会初始化session为 request.session = {}
 app.add_middleware(
     SessionMiddleware,
-    secret_key="lUtYVug40ycE7zdbGsx2JwrE7x2h6W",  # HMAC 签名：每次http请求，用于session_id的加密和解密
+    secret_key=SESSION_SECRET_KEY,  # HMAC 签名：每次http请求，用于session_id的加密和解密
     max_age=3600,
     https_only=False,
     same_site="lax"  # 允许用户从外部链接点击跳转到你的站点（顶层导航 GET）,阻止第三方页面通过 <img>、<iframe>、AJAX 等方式向你的站点发起请求, 阻断 CSRF 攻击

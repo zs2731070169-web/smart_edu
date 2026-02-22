@@ -6,9 +6,9 @@ After=network.target mysql.service neo4j.service
 Type=simple
 User=smart_edu
 Group=smart_edu
-WorkingDirectory=/home/smart_edu/app/src
-EnvironmentFile=/home/smart_edu/app/.env
-ExecStart=/home/smart_edu/app/venv/bin/python -m backend.app
+WorkingDirectory=/opt/smart_edu/src
+EnvironmentFile=/opt/smart_edu/.env
+ExecStart=/opt/smart_edu/venv/bin/python -m backend.app
 Restart=on-failure
 RestartSec=5s
 
