@@ -3,3 +3,6 @@
 /checkpoint/
 /models/
 .idea
+__pycache__/
+*.py[cod]
+*.pyo
