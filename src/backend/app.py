@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import uuid
 
 import uvicorn
@@ -48,7 +49,7 @@ async def index():
 @app.post("/new-chat")
 async def new_chat(request: Request):
     """清除当前会话，下次发送消息时后端自动生成新的 session_id"""
-    request.session.clear()
+    request.session.clear()  # 清除cookie里所有残留session数据，返回给客户端空session
     return {"status": "ok"}
 
 
@@ -63,10 +64,10 @@ async def chat(question_req: QuestionReq, request: Request):
     # 获取 session
     session = request.session
 
-    # 首次访问生成 session_id
+    # 首次访问生成新的session_id
     if "session_id" not in session:
-        session['session_id'] = str(uuid.uuid4())
-        logger.info(f"生成session_id: {session['session_id']}")
+        session['session_id'] = str(uuid.uuid4())  # 为首次访问用户生成唯一的session_id
+        logger.info(f"首次访问，生成session_id: {session['session_id']}")
 
     return StreamingResponse(
         chat_service.retrieval_chat_stream(
@@ -77,7 +78,10 @@ async def chat(question_req: QuestionReq, request: Request):
 
 
 if __name__ == '__main__':
+    # 端口从环境变量 APP_PORT 读取，默认 8000
+    # 多节点部署时由 systemd 模板服务（smart_edu@.service）通过 Environment=APP_PORT=%i 注入
+    port = int(os.environ.get('APP_PORT', 8000))
     # 直接调用 asyncio.run(server.serve()) 避免 uvicorn.run() 传递 loop_factory 参数
-    config = uvicorn.Config(app, host="0.0.0.0", port=8000)
+    config = uvicorn.Config(app, host="0.0.0.0", port=port)
     server = uvicorn.Server(config)
     asyncio.run(server.serve())

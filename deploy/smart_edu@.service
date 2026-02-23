@@ -1,0 +1,24 @@
+[Unit]
+# %i 是 Systemd 模板实例标识符，启动 smart_edu@8000 时 %i=8000，启动 smart_edu@8001 时 %i=8001
+Description=Smart Edu FastAPI Service (port %i)
+After=network.target mysql.service neo4j.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/smart_edu/src
+EnvironmentFile=/opt/smart_edu/.env
+# 将实例名（端口号）注入为环境变量，app.py 读取 APP_PORT 监听对应端口
+Environment=APP_PORT=%i
+ExecStart=/opt/smart_edu/venv/bin/python -m backend.app
+Restart=on-failure
+RestartSec=5s
+
+# 日志输出到 systemd journal，日志标识符含端口，方便区分两个节点
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=smart_edu_%i
+
+[Install]
+WantedBy=multi-user.target
