@@ -40,7 +40,7 @@ app.mount(path="/static", app=StaticFiles(directory=WEB_DIR, html=True), name="w
 # 对话服务
 chat_service = ChatService()
 
-
+# 本地测试开发使用, 生产环境无效，生产环境走 nginx 代理
 @app.get("/")
 async def index():
     return RedirectResponse(root_path + "/static/index.html")

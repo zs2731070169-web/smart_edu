@@ -12,9 +12,10 @@ AI 驱动的智能教育系统，基于 **RAG + 知识图谱**架构，提供自
 # 安装依赖
 pip install -r requirements.txt
 
-# 启动后端服务（在项目根目录下执行）
+# 启动后端服务（在项目根目录下执行，默认端口 8000）
 cd src && python -m backend.app
-# 服务监听：http://localhost:8000/smart/edu/
+# 指定端口（多节点场景）
+APP_PORT=8001 python -m backend.app
 
 # 直接测试 Agent（运行 agent/__init__.py 中的 main()）
 cd src && python -m agent
@@ -22,13 +23,9 @@ cd src && python -m agent
 # 数据同步：MySQL → Neo4j（首次部署或数据变更后执行，需要 GPU）
 cd src && python -m sync_data.sync_handler
 
-# UIE 模型微调
+# UIE 模型微调 / 评估 / 标注数据转换
 cd uie_pytorch && python finetune.py
-
-# UIE 模型评估
 cd uie_pytorch && python evaluate.py
-
-# Doccano 标注数据转换
 cd uie_pytorch && python doccano.py
 ```
 
@@ -43,23 +40,24 @@ Web UI → POST /smart/edu/chat
   → 流式返回 token（仅过滤 langgraph_node == "model" 的输出）
 ```
 
-Agent 在 `ChatService` 中**懒加载**：首次收到请求时调用 `gen_agent()` 初始化，之后复用同一实例。
+Agent 在 `ChatService` 中**懒加载**：`_get_agent()` 在首次请求时调用 `gen_agent()` 初始化，之后复用同一实例。流式事件通过 `astream_events(version="v2")` 产生，只有 `event["metadata"]["langgraph_node"] == "model"` 的事件才会 `yield` 给客户端，工具调用的中间输出被过滤。
 
 ### Agent 工作链（LangGraph ReAct）
 
-`src/agent/__init__.py` 中的 `gen_agent()` 构建 LangGraph ReAct Agent，执行以下步骤：
+`gen_agent()` 在 `src/agent/__init__.py` 中构建 LangGraph ReAct Agent：
 
 1. **意图判断**：对话型直接回答，业务无关问题拒绝，知识查询继续后续步骤
 2. **实体抽取** (`extract_entities`)：`llm_gpt` 从问题中识别实体和标签（基于 `NODE_LIST`）
 3. **实体对齐** (`entities_align_async`)：混合检索（向量 + 全文）将用户实体对齐到图数据库节点；`Teacher`、`Student`、`Price` 三类被显式跳过
-4. **Cypher 生成**：Agent 主 LLM（`llm_gpt`）根据图 schema 和对齐实体直接生成 Cypher（无独立工具，`gen_cypher` 工具已注释）
-5. **Cypher 校验** (`validate_cypher`)：`llm_opus` 进行语义校验 + `EXPLAIN` 语法校验，失败则纠错重试
+4. **Cypher 生成**：Agent 主 LLM（`llm_gpt`）根据图 schema 和对齐实体直接生成 Cypher
+5. **Cypher 校验** (`validate_cypher`)：`llm_opus` 语义校验 + Neo4j `EXPLAIN` 语法校验，失败则纠错重试
 6. **图查询** (`query_cypher`)：执行 Cypher，返回 JSON 结果
 7. **自然语言回答**：整合结果，流式输出给用户
 
 ### 混合检索原理
 
-`src/agent/retrieval_tools.py` 中的 `_search_entity()`：
+`src/agent/retrieval_tools.py` 的 `_search_entity()` 在线程池中执行同步 Neo4j 查询，通过 `asyncio.wrap_future` 并发调度多个实体：
+
 ```
 score = vector_score * alpha + fulltext_score * (1 - alpha)
 # alpha 默认 0.5，threshold 默认 0.5
@@ -67,49 +65,98 @@ score = vector_score * alpha + fulltext_score * (1 - alpha)
 
 - 向量索引命名规范：`{label_lower}_vector_index`
 - 全文索引命名规范：`{label_lower}_fulltext_index`（CJK 分析器）
-- 混合检索在线程池中同步执行，通过 `asyncio.wrap_future` 并发调度
+
+### 全局单例初始化（context.py）
+
+`src/agent/context.py` 在**模块导入时**立即初始化所有全局对象（非懒加载）：
+
+| 对象 | 说明 |
+|------|------|
+| `driver` | Neo4j 原生驱动（`GraphDatabase.driver`），执行 Cypher 和混合检索 |
+| `graph` | LangChain `Neo4jGraph`，获取图 schema |
+| `embedding_model` | 本地 `bge-base-zh-v1.5`（768 维，cosine），混合检索向量部分 |
+| `llm_gpt` | `gpt-5.2`（CLOSEAI），实体抽取和 Agent 主 LLM |
+| `llm_opus` | `claude-opus-4-6`（CLOSEAI），Cypher 校验专用 |
+| `thread_pool_executor` | `ThreadPoolExecutor(max_workers=10)`，混合检索并发调度 |
+| `graph_schema` | `graph.schema`，注入 Agent 系统提示词 |
 
 ### 模块职责
 
 | 路径 | 职责 |
 |------|------|
-| `src/backend/app.py` | FastAPI 入口，SessionMiddleware，路由定义 |
-| `src/backend/service.py` | 流式聊天服务，过滤 Agent 中间节点输出 |
-| `src/agent/__init__.py` | LangGraph Agent 构建，`gen_agent()` 懒加载 |
-| `src/agent/context.py` | 全局单例：LLM、Neo4j driver、embedding 模型、线程池（模块导入时立即初始化） |
+| `src/backend/app.py` | FastAPI 入口，SessionMiddleware，路由定义，静态文件挂载 |
+| `src/backend/service.py` | 流式聊天服务，Agent 懒加载，过滤中间节点输出 |
+| `src/backend/web/` | 前端静态资源：`index.html`、`chat.js`（ES module）、`chat.css` |
+| `src/agent/__init__.py` | LangGraph ReAct Agent 构建，`gen_agent()` |
+| `src/agent/context.py` | 全局单例：LLM、Neo4j driver、embedding 模型、线程池 |
 | `src/agent/retrieval_tools.py` | 4 个 LangChain 工具：实体抽取、对齐、Cypher 校验、图查询 |
-| `src/agent/prompts.py` | Agent 系统提示词（含完整 schema 和约束规则）、实体抽取提示词、Cypher 校验提示词 |
-| `src/agent/schema.py` | Pydantic 数据模型：`EntityPairs`、`ValidateCypherResult` 等 |
-| `src/config/config.py` | 所有配置项（数据库、LLM、模型路径、节点类型） |
-| `src/sync_data/sync_handler.py` | MySQL → Neo4j 数据同步，知识点抽取（需 GPU），索引创建 |
-| `src/sync_data/sync_utils.py` | `MysqlReader`（上下文管理器）、`Neo4jWriter`（含向量化和索引创建） |
-| `src/inference/` | UIE 模型独立推理脚本（`.bat` 训练/评估脚本） |
-| `uie_pytorch/` | UIE 通用信息抽取模型，支持 ONNX 和 PyTorch 后端；`sync_handler.py` 会将此目录加入 `sys.path` |
+| `src/agent/prompts.py` | 系统提示词（含完整 schema 和约束规则）、各工具提示词 |
+| `src/agent/schema.py` | Pydantic 模型：`Entity`、`EntityPairs`、`ValidateCypherResult` 等 |
+| `src/config/config.py` | 所有配置项，支持 `.env` 覆盖 |
+| `src/sync_data/sync_handler.py` | MySQL → Neo4j 数据同步，UIE 知识点抽取（需 GPU），索引创建 |
+| `src/sync_data/sync_utils.py` | `MysqlReader`（上下文管理器）、`Neo4jWriter`（向量化和索引创建） |
+| `uie_pytorch/` | UIE 通用信息抽取模型，支持 ONNX 和 PyTorch 后端 |
 
 ## 配置说明
 
-所有配置集中在 `src/config/config.py`，支持通过 `.env` 文件覆盖（参考 `.env.example`）：
+所有配置集中在 `src/config/config.py`，通过 `.env` 文件覆盖（参考 `.env.example`）：
 
-- **LLM**：使用两个 OpenAI 兼容接口平台（NEWCOIN / CLOSEAI），通过 `.env` 切换。当前 `context.py` 中 `llm_gpt`（`gpt-5.2`，用于实体抽取/Agent）和 `llm_opus`（`claude-opus-4-6`，用于 Cypher 校验）**均使用 `CLOSEAI_CONFIG`**
-- **Neo4j**：`neo4j://localhost:7687`，图数据库存储知识图谱
-- **MySQL**：`localhost:3306`，存储原始教育结构化数据
-- **嵌入模型**：`models/bge-base-zh-v1.5`（本地 HuggingFace 模型，768 维，cosine 相似度）
+- **LLM**：`llm_gpt`（`gpt-5.2`）和 `llm_opus`（`claude-opus-4-6`）均使用 `CLOSEAI_CONFIG`
+- **Neo4j**：`NEO4J_URI` 默认 `neo4j://localhost:7687`
+- **MySQL**：`MYSQL_HOST/PORT/USER/PASSWORD/DATABASE`
+- **嵌入模型**：`models/bge-base-zh-v1.5`（本地 HuggingFace，768 维）
 - **UIE 模型**：`models/uie_base_pytorch`，微调最优检查点在 `checkpoint/model_best/`
-- **AGENT_WITH_MEMORY**：控制 Agent 是否启用跨轮对话记忆（InMemorySaver），默认 `true`
-- **NODE_LIST**：`['Course', 'Chapter', 'Question', 'Knowledge', 'Category', 'Paper', 'Subject', 'Video']`
+- **`AGENT_WITH_MEMORY`**：是否启用跨轮对话记忆（`InMemorySaver`），默认 `true`
+- **`APP_PORT`**：服务监听端口，默认 `8000`；多节点部署时由 systemd 模板注入
+- **`NODE_LIST`**：`['Course', 'Chapter', 'Question', 'Knowledge', 'Category', 'Paper', 'Subject', 'Video']`
 
 ## 部署
 
-- **服务管理**：`deploy/smart_edu.service`（Systemd），工作目录为 `/home/smart_edu/app/src`
-- **反向代理**：`deploy/nginx.conf`，监听 443，关闭 `proxy_buffering`（流式响应必须）
-- **会话**：基于加密 Cookie，TTL 3600s，`/new-chat` 接口清除历史
+### 服务管理（Systemd 模板）
+
+`deploy/smart_edu@.service` 为多节点模板服务，`%i` 为实例标识符（即端口号）：
+
+```bash
+# 部署两个节点
+cp deploy/smart_edu@.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable smart_edu@8000 smart_edu@8001
+systemctl start smart_edu@8000 smart_edu@8001
+
+# 查看各节点日志（SyslogIdentifier 不同）
+journalctl -u smart_edu@8000 -f
+journalctl -u smart_edu@8001 -f
+```
+
+### Nginx（动静分离 + 负载均衡）
+
+`deploy/nginx.conf` 核心设计：
+
+- **动静分离**：`/smart/edu/static/` 由 Nginx 直接从磁盘服务（`alias /opt/smart_edu/src/backend/web/`），不经过 Python 后端；API 请求（`/smart/edu/`）反向代理到 FastAPI
+- **缓存策略**：JS/CSS/图片缓存 1 天（`public, max-age=86400`）；HTML 不缓存（`no-cache`）；缓存类型由 `map $uri $static_cache_control` 决定
+- **负载均衡**：`ip_hash` 将同一客户端 IP 路由到固定节点，保证 `InMemorySaver` 中的对话上下文连续
+- **流式响应**：proxy location 内 `proxy_buffering off`，token 实时透传；超时读写均 120s
+- **Gzip**：开启，阈值 1KB，压缩 JS/CSS/JSON 等文本类型
+
+```bash
+nginx -t        # 验证配置
+nginx -s reload # 热重载（不中断现有连接）
+```
+
+### 会话机制
+
+- Session 加密存储在客户端 Cookie（Starlette `SessionMiddleware`，HMAC 签名，TTL 3600s）
+- `session_id` 为 UUID，首次请求时生成，作为 LangGraph `thread_id` 实现多轮记忆
+- Nginx `ip_hash` 保证同一用户的请求始终路由到同一节点（InMemorySaver 进程内存隔离）
+- `POST /new-chat` 清除 session，下次请求自动生成新 `session_id`
 
 ## 数据库 Schema（Neo4j 节点类型）
 
 完整节点类型：`Course`, `Chapter`, `Question`, `Knowledge`, `Category`, `Paper`, `Subject`, `Video`, `Teacher`, `Student`, `Price`
 
-**注意**：`Teacher`、`Student`、`Price` 不在 `NODE_LIST` 中，实体对齐时被显式过滤跳过；`Knowledge` 节点无 `id` 字段，向量索引以 `name` 作为唯一标识。
-
-新增节点类型时需同步更新：`config.py` 的 `NODE_LIST`、`sync_data/sync_handler.py` 中的同步逻辑、以及 Neo4j 向量/全文索引。
-
-数据同步中的 `SyncTextHandler`（通过 UIE 模型抽取知识点）需要 **GPU** 环境（`device="gpu"`）。
+**注意事项**：
+- `Teacher`、`Student`、`Price` 不在 `NODE_LIST`，实体对齐时被显式过滤跳过
+- `Knowledge` 节点无 `id` 字段，向量索引以 `name` 作为唯一标识
+- 新增节点类型需同步更新：`NODE_LIST`、`sync_handler.py` 同步逻辑、Neo4j 向量/全文索引
+- `SyncTextHandler`（UIE 抽取知识点）需要 **GPU** 环境（`device="gpu"`）
+- `uie_pytorch/` 目录由 `sync_handler.py` 在运行时动态加入 `sys.path`
