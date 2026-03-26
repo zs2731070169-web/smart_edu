@@ -3,7 +3,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-ROOT_DIR = Path(__file__).parent.parent.parent
+ROOT_DIR = Path(__file__).parent.parent.parent.parent
 
 # 加载项目根目录下的 .env 文件（不覆盖已存在的系统环境变量）
 load_dotenv(ROOT_DIR / ".env", override=False)
@@ -27,7 +27,7 @@ MYSQL_CONFIG = {
     'port': int(os.environ.get('MYSQL_PORT', 3306)),
     'user': os.environ.get('MYSQL_USER', 'root'),
     'password': os.environ.get('MYSQL_PASSWORD', ''),
-    'database': os.environ.get('MYSQL_DATABASE', 'smart_edu')
+    'db': os.environ.get('MYSQL_DATABASE', 'smart_edu')
 }
 
 NEO4J_CONFIG = {
@@ -45,7 +45,7 @@ SESSION_SECRET_KEY = os.environ.get('SESSION_SECRET_KEY', '')
 AGENT_WITH_MEMORY = os.environ.get('AGENT_WITH_MEMORY', 'true').lower() == 'true'
 
 # 静态资源配置
-WEB_DIR = str(ROOT_DIR / "src" / "backend" / "web")
+WEB_DIR = str(ROOT_DIR / "src" / "front")
 
 # 模型
 EMBEDDINGS_MODEL = str(ROOT_DIR / "models" / "bge-base-zh-v1.5")

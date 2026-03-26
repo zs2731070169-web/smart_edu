@@ -4,18 +4,20 @@ import os
 import re
 import sys
 
+from backend.repositories.mysql_repo import mysql_repo
+from backend.repositories.neo_repo import neo4j_repo
+from backend.sync.schema.schema import Node, NodeRelation, VectorIndex, FullIndex
+
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../uie_pytorch"))
 
-from config.config import CHECKPOINT_DIR, BASE_MODEL
-from sync_data.schema import Node, NodeRelation, FullIndex, VectorIndex
-from sync_data.sync_utils import MysqlReader, Neo4jWriter
+from backend.config.settings import CHECKPOINT_DIR, BASE_MODEL
 from uie_pytorch.uie_predictor import UIEPredictor
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger("Neo4jClient")
+logger = logging.getLogger("sync_cli")
 
 
 def _standardize_text(text: str) -> str:
@@ -170,7 +172,7 @@ class SyncMysqlHandler:
         MATCH (start:Course {{id:raw.course_id}}), (end:Teacher {{teacher_name:raw.teacher_name}})
         MERGE (start)-[:HAVE]->(end)
         """
-        writer.execute_cypher(driver=writer.driver, cypher=cypher, parameters={"raws": properties},
+        writer.execute_cypher(cypher, parameters={"raws": properties},
                               err_msg="课程-教师关系创建失败")
 
         # 建立课程-价格关系
@@ -185,7 +187,7 @@ class SyncMysqlHandler:
                 MATCH (start:Course {{id:raw.course_id}}), (end:Price {{price:raw.price}})
                 MERGE (start)-[:HAVE]->(end)
                 """
-        writer.execute_cypher(driver=writer.driver, cypher=cypher, parameters={"raws": properties},
+        writer.execute_cypher(cypher, parameters={"raws": properties},
                               err_msg="课程-价格关系创建失败")
 
         # 学生-课程关系
@@ -294,7 +296,7 @@ class SyncTextHandler:
                MATCH (start:{start_label} {{id:raw.id}}), (end:Knowledge {{name:raw.name}})
                MERGE (start)-[:HAVE]->(end)
                """
-            writer.execute_cypher(driver=writer.driver, cypher=cypher, parameters={"raws": relation_properties},
+            writer.execute_cypher(cypher, parameters={"raws": relation_properties},
                                   err_msg="课程-知识点关系创建失败")
             logger.info(f"创建[{start_label}-HAVE-Knowledge]关系完成")
 
@@ -312,7 +314,7 @@ class SyncTextHandler:
         WITH DISTINCT knowledge, pre_knowledge
         MERGE (knowledge)-[:NEED]->(pre_knowledge)
        """
-        writer.execute_cypher(driver=writer.driver, cypher=cypher, err_msg="知识点先修关系创建失败")
+        writer.execute_cypher(cypher, err_msg="知识点先修关系创建失败")
         logger.info("创建知识点先修关系完成")
 
         # 创建知识点包含关系
@@ -322,7 +324,7 @@ class SyncTextHandler:
         WITH DISTINCT knowledge, bigger_knowledge
         MERGE (knowledge)-[:BELONG]->(bigger_knowledge)
         """
-        writer.execute_cypher(driver=writer.driver, cypher=cypher, err_msg="知识点包含关系创建失败")
+        writer.execute_cypher(cypher, err_msg="知识点包含关系创建失败")
         logger.info("创建知识点包含关系完成")
 
         # 创建知识点相关关系
@@ -332,7 +334,7 @@ class SyncTextHandler:
         WITH DISTINCT knowledge, related_knowledge
         MERGE (knowledge)-[:RELATED]->(related_knowledge)
         """
-        writer.execute_cypher(driver=writer.driver, cypher=cypher, err_msg="知识点相关关系创建失败")
+        writer.execute_cypher(cypher, err_msg="知识点相关关系创建失败")
         logger.info("创建知识点相关关系完成")
 
 
@@ -341,6 +343,7 @@ class SyncIndexHandler:
     同步索引处理器
     :return:
     """
+
     def sync_fulltext_index(self, writer):
         # 删除全文索引
         writer.drop_index("SHOW FULLTEXT INDEX")
@@ -365,14 +368,15 @@ class SyncIndexHandler:
         MATCH (n)
         REMOVE n.embedding
         """
-        writer.execute_cypher(writer.driver, cypher, err_msg="向量属性删除失败")
-        logging.info(f"embedding属性删除完毕")
+        writer.execute_cypher(cypher, err_msg="向量属性删除失败")
+        logger.info("embedding属性删除完毕")
 
         vector_list = [
             VectorIndex(label="Course", index_name="course_vector_index", id_property="id", text_property="name"),
             VectorIndex(label="Chapter", index_name="chapter_vector_index", id_property="id", text_property="name"),
             VectorIndex(label="Question", index_name="question_vector_index", id_property="id", text_property="name"),
-            VectorIndex(label="Knowledge", index_name="knowledge_vector_index", id_property="name", text_property="name"),
+            VectorIndex(label="Knowledge", index_name="knowledge_vector_index", id_property="name",
+                        text_property="name"),
             VectorIndex(label="Category", index_name="category_vector_index", id_property="id", text_property="name"),
             VectorIndex(label="Paper", index_name="paper_vector_index", id_property="id", text_property="name"),
             VectorIndex(label="Subject", index_name="subject_vector_index", id_property="id", text_property="name"),
@@ -386,13 +390,13 @@ if __name__ == '__main__':
     sync_text_handler = SyncTextHandler()
     sync_index_handler = SyncIndexHandler()
 
-    with MysqlReader() as reader, Neo4jWriter() as writer:
-        # 同步结构化数据节点
-        sync_mysql_handler.sync_nodes(reader, writer)
-        sync_mysql_handler.sync_relations(reader, writer)
-        # 同步文本数据节点
-        sync_text_handler.sync_knowledge_node_and_relation(reader, writer)
-        sync_text_handler.sync_knowledge_relations(writer)
-        # 同步索引
-        sync_index_handler.sync_fulltext_index(writer)
-        sync_index_handler.sync_vector_index(writer)
+
+    # 同步结构化数据节点
+    sync_mysql_handler.sync_nodes(mysql_repo, neo4j_repo)
+    sync_mysql_handler.sync_relations(mysql_repo, neo4j_repo)
+    # 同步文本数据节点
+    sync_text_handler.sync_knowledge_node_and_relation(mysql_repo, neo4j_repo)
+    sync_text_handler.sync_knowledge_relations(neo4j_repo)
+    # 同步索引
+    sync_index_handler.sync_fulltext_index(neo4j_repo)
+    sync_index_handler.sync_vector_index(neo4j_repo)

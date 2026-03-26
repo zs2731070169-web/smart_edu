@@ -4,16 +4,17 @@ import logging
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
 
-from agent.context import graph_schema, llm_gpt
-from agent.prompts import agent_system_prompt
-from agent.retrieval_tools import entities_align_async, query_cypher, validate_cypher, extract_entities
-from config.config import AGENT_WITH_MEMORY
+from backend.core.client.llm_client import llm_gpt
+from backend.core.client.neo4j_client import graph_schema
+from backend.prompts.prompts import agent_system_prompt
+from backend.core.tools.retrieval_tools import entities_align_async, query_cypher, validate_cypher, extract_entities
+from backend.config.settings import AGENT_WITH_MEMORY
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger("Agent")
+logger = logging.getLogger("agent")
 
 
 async def gen_agent():

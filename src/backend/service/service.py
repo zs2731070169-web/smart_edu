@@ -3,8 +3,8 @@ from typing import AsyncGenerator
 
 from openai import BadRequestError
 
-from agent import gen_agent
-from backend.schema import UserChat
+from backend.core.agent import gen_agent
+from backend.web.schema.schema import UserChat
 
 logger = logging.getLogger(__name__)
 

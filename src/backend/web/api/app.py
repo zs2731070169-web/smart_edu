@@ -9,9 +9,9 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import RedirectResponse, StreamingResponse
 from starlette.staticfiles import StaticFiles
 
-from backend.schema import UserChat, QuestionReq
-from backend.service import ChatService
-from config.config import WEB_DIR, SESSION_SECRET_KEY
+from backend.web.schema import UserChat, QuestionReq
+from backend.service.service import ChatService
+from backend.config.settings import WEB_DIR, SESSION_SECRET_KEY
 
 logging.basicConfig(format="%(asctime)s %(filename)s %(message)s", level=logging.INFO)
 logger = logging.getLogger("Web")

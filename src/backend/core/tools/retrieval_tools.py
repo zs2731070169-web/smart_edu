@@ -7,11 +7,12 @@ from neo4j import Query
 from neo4j.exceptions import CypherSyntaxError
 from pydantic import Field
 
-from agent.context import thread_pool_executor, embedding_model, driver, graph_schema, llm_opus, graph, \
-    llm_gpt
-from agent.prompts import cypher_validate_prompt, extract_entities_prompt
-from agent.schema import EntityPairs, Entity, ValidateCypherResult, ValidateCypher
-from config.config import NODE_LIST
+from backend.core.client.llm_client import embedding_model, llm_opus, llm_gpt
+from backend.core.client.neo4j_client import graph, driver, graph_schema
+from backend.prompts.prompts import cypher_validate_prompt, extract_entities_prompt
+from backend.core.schema.schema import EntityPairs, Entity, ValidateCypherResult, ValidateCypher
+from backend.config.settings import NODE_LIST
+from backend.utils.thread_utils import thread_pool_executor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,7 +55,7 @@ async def extract_entities(question: str = Field(default="", description="用户
 
     logger.info(f"[实体抽取] 结果: {llm_output.entity_pairs}")
 
-    return llm_output.entity_pairs
+    return llm_output
 
 
 @tool(
@@ -63,10 +64,10 @@ async def extract_entities(question: str = Field(default="", description="用户
     args_schema=EntityPairs,
     return_direct=False,
 )
-async def entities_align_async(entity_pairs: EntityPairs) -> List[Tuple[str, str]]:
+async def entities_align_async(entity_pairs: List[Entity]) -> List[Tuple[str, str]]:
     """
     实体对齐工具
-    :param entity_pairs:
+    :param entity_pairs: 实体列表（由 args_schema=EntityPairs 解包后直接传入）
     :return:
     """
     logger.info(f"[实体对齐] 入参 entity_pairs={entity_pairs}")
