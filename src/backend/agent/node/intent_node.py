@@ -7,6 +7,7 @@ from backend.agent.schema.schema import IntentResult
 from backend.agent.state import OverallState
 from backend.core.client.llm_client import llm_chat
 from backend.prompts.intent_prompt import intent_prompt
+from backend.utils.history_utils import compress_history
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,7 +30,11 @@ async def intent_identify(state: OverallState, runtime: Runtime[EnvContext]) -> 
             "intent_reply": "您好,请输入您的问题,我会尽力为您解答教育相关内容。",
         }
 
-    prompt = intent_prompt.invoke({"question": question, "history": messages[:-1]})
+    # 压缩历史对话
+    history = compress_history(messages[:-1])
+
+    # 执行意图识别
+    prompt = intent_prompt.invoke({"question": question, "history": history})
     result: IntentResult = await (
         llm_chat
         .with_structured_output(IntentResult, method="function_calling")
