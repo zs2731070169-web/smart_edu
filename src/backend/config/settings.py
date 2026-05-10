@@ -9,16 +9,9 @@ ROOT_DIR = Path(__file__).parent.parent.parent.parent
 load_dotenv(ROOT_DIR / ".env", override=False)
 
 # 模型开放平台配置
-NEWCOIN_CONFIG = {
-    'url': os.environ.get('NEWCOIN_BASE_URL', 'https://api.newcoin.top/v1'),
-    'api_key': os.environ.get('NEWCOIN_API_KEY', ''),
-    'temperature': 0.5
-}
-
-CLOSEAI_CONFIG = {
-    'url': os.environ.get('CLOSEAI_BASE_URL', 'https://api.openai-proxy.org/v1'),
-    'api_key': os.environ.get('CLOSEAI_API_KEY', ''),
-    'temperature': 0.5
+LLM_CONFIG = {
+    'url': os.environ.get('BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1'),
+    'api_key': os.environ.get('API_KEY', '')
 }
 
 # 数据库配置
@@ -26,15 +19,15 @@ MYSQL_CONFIG = {
     'host': os.environ.get('MYSQL_HOST', 'localhost'),
     'port': int(os.environ.get('MYSQL_PORT', 3306)),
     'user': os.environ.get('MYSQL_USER', 'root'),
-    'password': os.environ.get('MYSQL_PASSWORD', ''),
-    'db': os.environ.get('MYSQL_DATABASE', 'smart_edu')
+    'password': os.environ.get('MYSQL_PASSWORD', 'root'),
+    'database': os.environ.get('MYSQL_DATABASE', 'smart_edu')
 }
 
 NEO4J_CONFIG = {
     'uri': os.environ.get('NEO4J_URI', 'neo4j://localhost:7687'),
     'auth': (
         os.environ.get('NEO4J_USER', 'neo4j'),
-        os.environ.get('NEO4J_PASSWORD', '')
+        os.environ.get('NEO4J_PASSWORD', '12345678')
     )
 }
 
@@ -57,3 +50,5 @@ CHECKPOINT_DIR = ROOT_DIR / "checkpoint"
 
 # 进行实体提取的标签节点
 NODE_LIST = ['Course', 'Chapter', 'Question', 'Knowledge', 'Category', 'Paper', 'Subject', 'Video']
+
+ROOT_PATH = os.environ.get("ROOT_PATH", '/smart/edu')

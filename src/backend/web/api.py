@@ -1,12 +1,11 @@
 import logging
 import uuid
-from urllib.request import Request
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from starlette.responses import RedirectResponse, StreamingResponse
 
+from backend.config.settings import ROOT_PATH
 from backend.service import chat_service
-from backend.web.app import root_path
 from backend.web.schema import QuestionReq, UserChat
 
 logging.basicConfig(format="%(asctime)s %(filename)s %(message)s", level=logging.INFO)
@@ -21,7 +20,7 @@ route = APIRouter()
 # 本地测试开发使用, 生产环境无效，生产环境走 nginx 代理
 @route.get("/")
 async def index():
-    return RedirectResponse(root_path + "/static/index.html")
+    return RedirectResponse(ROOT_PATH + "/static/index.html")
 
 
 @route.post("/new-chat")

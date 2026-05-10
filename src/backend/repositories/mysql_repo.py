@@ -1,4 +1,4 @@
-from backend.core.db.db_conn import MysqlReader
+from backend.core.conn.db_conn import MysqlReader
 
 
 class MysqlRepo:

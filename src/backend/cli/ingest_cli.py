@@ -1,16 +1,19 @@
 import html
 import logging
-import os
 import re
 import sys
 
 from backend.repositories.mysql_repo import mysql_repo
 from backend.repositories.neo_repo import neo4j_repo
-from backend.graph.schema.schema import Node, NodeRelation, VectorIndex, FullIndex
+from backend.repositories.schema.schema import Node, NodeRelation, FullIndex, VectorIndex
+from backend.config.settings import ROOT_DIR, CHECKPOINT_DIR, BASE_MODEL
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../uie_pytorch"))
+# uie_pytorch 同时需要两条路径:
+# 1. ROOT_DIR        → 让外部 `from uie_pytorch.uie_predictor import` 把它当包加载
+# 2. ROOT_DIR/uie_pytorch → 让内部 `from utils import ...` 这种"目录内导入"找到 utils.py
+sys.path.insert(0, str(ROOT_DIR))
+sys.path.insert(0, str(ROOT_DIR / "uie_pytorch"))
 
-from backend.config.settings import CHECKPOINT_DIR, BASE_MODEL
 from uie_pytorch.uie_predictor import UIEPredictor
 
 logging.basicConfig(

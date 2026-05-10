@@ -2,97 +2,83 @@ import asyncio
 import logging
 from typing import List, Tuple
 
-from langchain_core.tools import tool
+from langgraph.runtime import Runtime
 from neo4j import Query
 
+from backend.agent.context import EnvContext
+from backend.agent.schema.schema import Entity
+from backend.agent.state import OverallState
+from backend.config.constants import THRESHOLD
 from backend.core.client.llm_client import embedding_model
 from backend.core.client.neo4j_client import driver
-from backend.agent.schema import EntityPairs, Entity
 from backend.utils.thread_utils import thread_pool_executor
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger("RetrievalTools")
+logger = logging.getLogger("entities_align")
 
 
-# @tool(
-#     name_or_callable="entities_align",
-#     description="通过混合检索进行实体对齐，并返回对齐后的实体和标签对列表",
-#     args_schema=EntityPairs,
-#     return_direct=False,
-# )
-async def entities_align(entity_pairs: List[Entity]) -> List[Tuple[str, str]]:
-    """
-    通过混合检索进行实体对齐，并返回对齐后的实体和标签对列表
-    :param entity_pairs: 实体列表（由 args_schema=EntityPairs 解包后直接传入）
-    :return:
-    """
-    logger.info(f"[实体对齐] 入参 entity_pairs={entity_pairs}")
+async def entities_align(state: OverallState, runtime: Runtime[EnvContext]) -> dict:
+    """通过混合检索进行实体对齐,返回对齐后的 (entity, label) 列表"""
+    tid = runtime.context.get("thread_id", "-")
+    entity_pairs: List[Entity] = state.get("entity_pairs") or []
+    logger.info(f"[entities_align_node][{tid}] 入参 entity_pairs={entity_pairs}")
 
     if not entity_pairs:
-        logger.info("[实体对齐] 实体列表为空，跳过对齐")
-        return []
+        logger.info(f"[entities_align_node][{tid}] 实体列表为空,跳过对齐")
+        return {"aligned_entities": []}
 
-    # 分别获取实体列表和标签列表
-    entity_pairs = [(entity_pair.entity, entity_pair.label) for entity_pair in entity_pairs]
-    entities, labels = zip(*entity_pairs)
+    pairs = [(p.entity, p.label) for p in entity_pairs]
+    entities, labels = zip(*pairs)
 
-    search_targets = [(entity, label)
-                      for entity, label in zip(entities, labels)
-                      if label not in ["Teacher", "Student", "Price"]
-                      ]
-    logger.info(f"[实体对齐] 过滤后待检索实体: {search_targets}")
+    search_targets = [
+        (entity, label)
+        for entity, label in zip(entities, labels)
+        if label not in ["Teacher", "Student", "Price"]
+    ]
+    logger.info(f"[entities_align_node][{tid}] 过滤后待检索实体: {search_targets}")
+
+    if not search_targets:
+        return {"aligned_entities": []}
 
     # 异步并发执行混合检索
     hybrid_search_results = await asyncio.gather(*[
         asyncio.wrap_future(
             thread_pool_executor.submit(
-                _search_entity, entity=entity, label=label, top_k=1
+                _search_entity, entity=entity, label=label, top_k=1, threshold=THRESHOLD
             )
         ) for entity, label in search_targets
     ])
 
-    # 收集对齐后的实体列表
-    aligned_entities = [
+    aligned_entities: List[Tuple[str, str]] = [
         (result[0]['text'], result[0]['labels'][0])
         for result in hybrid_search_results
-        if result  # 过滤掉低于阈值的空检索结果
+        if result
     ]
+    logger.info(f"[entities_align_node][{tid}] 结果: {aligned_entities}")
 
-    logger.info(f"[实体对齐] 结果: {aligned_entities}")
-
-    return aligned_entities
+    return {"aligned_entities": aligned_entities}
 
 
 def _search_entity(entity: str,
                    label: str,
                    top_k: int = 3,
                    alpha: float = 0.5,
-                   threshold: float = 0.5
+                   threshold: float = 0.6
                    ) -> list:
-    """
-    对单个实体进行线性混合检索
-    :param entity: 实体文本
-    :param label: 实体标签，用于确定检索索引
-    :param top_k: 返回结果数量
-    :param alpha: 向量检索权重，全文检索权重为 (1 - alpha)
-    :return: 检索结果列表
-    """
+    """对单个实体进行线性混合检索"""
     logger.info(
         f"[混合检索] 入参 entity='{entity}', label='{label}', top_k={top_k}, alpha={alpha}, threshold={threshold}")
 
-    # 生成实体向量
     query_vector = embedding_model.embed_query(entity)
 
-    # 定义索引名称：{label}_vector_index / {label}_fulltext_index
     label_lower = label.lower()
     vector_index_name = f"{label_lower}_vector_index"
     fulltext_index_name = f"{label_lower}_fulltext_index"
     logger.info(f"[混合检索] 使用索引: vector='{vector_index_name}', fulltext='{fulltext_index_name}'")
 
-    # 使用 get_search_query 构建混合检索 Cypher
     query = (
         """
         CALL {
@@ -116,7 +102,6 @@ def _search_entity(entity: str,
         """
     )
 
-    # 合并运行时参数
     run_params = {
         "vector_index_name": vector_index_name,
         "query_vector": query_vector,
@@ -127,15 +112,12 @@ def _search_entity(entity: str,
         "alpha": alpha,
     }
 
-    # 进行混合检索
     with driver.session() as session:
         result = session.run(Query(text=query), run_params)
         records = result.data()
 
     logger.info(f"[混合检索] 原始结果({len(records)}条): {records}")
 
-    # 判断检索结果是否达到期望阈值
     retrieval_records = [record for record in records if record['score'] >= threshold]
     logger.info(f"[混合检索] 阈值过滤后({len(retrieval_records)}条): {retrieval_records}")
-
     return retrieval_records

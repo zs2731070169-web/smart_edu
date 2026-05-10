@@ -1,0 +1,29 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	intent_node(intent_node)
+	extract_entities_node(extract_entities_node)
+	entities_align_node(entities_align_node)
+	generate_cypher_node(generate_cypher_node)
+	validate_cypher_node(validate_cypher_node)
+	query_cypher_node(query_cypher_node)
+	answer_node(answer_node)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> intent_node;
+	entities_align_node --> generate_cypher_node;
+	extract_entities_node --> entities_align_node;
+	generate_cypher_node --> validate_cypher_node;
+	intent_node -. &nbsp;direct&nbsp; .-> __end__;
+	intent_node -. &nbsp;continue&nbsp; .-> extract_entities_node;
+	query_cypher_node --> answer_node;
+	validate_cypher_node -. &nbsp;answer&nbsp; .-> answer_node;
+	validate_cypher_node -. &nbsp;generate_cypher&nbsp; .-> generate_cypher_node;
+	validate_cypher_node -. &nbsp;query_cypher&nbsp; .-> query_cypher_node;
+	answer_node --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

@@ -1,5 +1,5 @@
-from typing import TypedDict
+from typing_extensions import TypedDict
 
 
-class EnvContext(TypedDict):
-    pass
+class EnvContext(TypedDict, total=False):
+    thread_id: str

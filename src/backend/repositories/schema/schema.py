@@ -21,7 +21,7 @@ class FullIndex(BaseModel):
     property: str = Field(default="", description="索引属性")
 
 class VectorIndex(BaseModel):
-    index_name: str = Field(default="", description="索引名称")
+    index_name: str = Field(default="", description="向量名称")
     label: str = Field(default="", description="节点标签")
     text_property: str = Field(default="", description="向量文本属性")
     id_property: str = Field(default="", description="向量id属性")

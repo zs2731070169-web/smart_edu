@@ -3,14 +3,14 @@ import os
 
 import uvicorn
 from fastapi import FastAPI
+from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
 
-from backend.config.settings import WEB_DIR, SESSION_SECRET_KEY
+from backend.config.settings import WEB_DIR, SESSION_SECRET_KEY, ROOT_PATH
 from backend.web.api import route
 
-root_path = "/smart/edu"
-app = FastAPI(root_path=root_path)
+app = FastAPI(root_path=ROOT_PATH)
 
 # Session 数据不存储在服务器，而是加密后存在客户端 Cookie 里
 # 每次http请求，SessionMiddleware都会读取Cookie里的session数据进行解密和反序列化，并挂载到request.session
@@ -24,8 +24,15 @@ app.add_middleware(
     same_site="lax"  # 允许用户从外部链接点击跳转到你的站点（顶层导航 GET）,阻止第三方页面通过 <img>、<iframe>、AJAX 等方式向你的站点发起请求, 阻断 CSRF 攻击
 )
 
-# 加载静态资源
-app.mount(path="/static", app=StaticFiles(directory=WEB_DIR, html=True), name="web")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_credentials=True,
+)
+
+# 加载静态资源（前端已分离）
+# app.mount(path="/static", app=StaticFiles(directory=WEB_DIR, html=True), name="web")
 
 app.include_router(route)
 
