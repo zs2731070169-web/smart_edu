@@ -6,7 +6,7 @@ from neo4j.exceptions import Neo4jError
 from backend.core.client.llm_client import embedding_model
 from backend.core.client.neo4j_client import driver
 from backend.core.db.neo_conn import Neo4jWriter
-from backend.sync.schema.schema import Node, NodeRelation, VectorIndex, FullIndex
+from backend.graph.schema.schema import Node, NodeRelation, VectorIndex, FullIndex
 
 logging.basicConfig(
     level=logging.INFO,

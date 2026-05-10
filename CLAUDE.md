@@ -21,7 +21,7 @@ APP_PORT=8001 cd src && python -m backend.web.api.app
 cd src && python -m backend.core.agent
 
 # 数据同步：MySQL → Neo4j（首次部署或数据变更后执行，需要 GPU）
-cd src && python -m backend.sync.cli.sync_cli
+cd src && python -m backend.graph.cli.sync_cli
 
 # UIE 模型微调 / 评估 / 标注数据转换
 cd uie_pytorch && python finetune.py

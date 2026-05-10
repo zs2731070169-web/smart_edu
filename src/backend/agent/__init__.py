@@ -4,10 +4,13 @@ import logging
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
 
+from backend.agent.tools.entities_aligin_async_tool import entities_align_async
+from backend.agent.tools.extract_entities_tool import extract_entities
+from backend.agent.tools.validate_cypher_tool import validate_cypher
 from backend.core.client.llm_client import llm_gpt
 from backend.core.client.neo4j_client import graph_schema
-from backend.prompts.prompts import agent_system_prompt
-from backend.core.tools.retrieval_tools import entities_align_async, query_cypher, validate_cypher, extract_entities
+from backend.prompts.cypher_validate_prompt import agent_system_prompt
+from backend.agent.tools.query_cypher_tool import query_cypher
 from backend.config.settings import AGENT_WITH_MEMORY
 
 logging.basicConfig(
@@ -40,12 +43,14 @@ async def gen_agent():
 
     return agent
 
+
 async def main():
     agent = await gen_agent()
     result = await agent.ainvoke(
         {
             "messages": [
-                {"role": "user", "content": "以下关于方法调用的代码的执行结果是 public class test { public static void main(string args[]) { int i = 99; mb_operate(i); system.out.print(i + 100); } static int mb_operate(int i) { return i + 100; }}，这个题目我要学习哪些课程和知识点"}
+                {"role": "user",
+                 "content": "以下关于方法调用的代码的执行结果是 public class test { public static void main(string args[]) { int i = 99; mb_operate(i); system.out.print(i + 100); } static int mb_operate(int i) { return i + 100; }}，这个题目我要学习哪些课程和知识点"}
             ]
         },
         config={
@@ -54,7 +59,6 @@ async def main():
     )
 
     logger.info(f"智能体执行结果:{result['messages'][-1].content}")
-
 
 
 if __name__ == '__main__':

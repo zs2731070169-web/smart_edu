@@ -6,7 +6,7 @@ import sys
 
 from backend.repositories.mysql_repo import mysql_repo
 from backend.repositories.neo_repo import neo4j_repo
-from backend.sync.schema.schema import Node, NodeRelation, VectorIndex, FullIndex
+from backend.graph.schema.schema import Node, NodeRelation, VectorIndex, FullIndex
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../uie_pytorch"))
 

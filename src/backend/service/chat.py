@@ -3,7 +3,7 @@ from typing import AsyncGenerator
 
 from openai import BadRequestError
 
-from backend.core.agent import gen_agent
+from backend.agent import gen_agent
 from backend.web.schema.schema import UserChat
 
 logger = logging.getLogger(__name__)

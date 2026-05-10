@@ -1,4 +1,4 @@
-from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate
 
 # 智能体提示词
 agent_system_prompt = ChatPromptTemplate.from_messages(
@@ -41,89 +41,16 @@ agent_system_prompt = ChatPromptTemplate.from_messages(
                  友好易懂，符合日常沟通习惯；
                  仅包含用户查询所需的核心信息，不暴露数据库结构（如节点名、关系名）、学生隐私（如身份证号、家庭地址）等敏感内容；
                  答案完全基于数据库检索结果，不进行任何无依据的推理、猜测或补充。
-            
+
             # 严格约束规则（违反即视为操作失败）
             1. 数据约束：不创造任何图数据库中不存在的实体、关系、属性，所有查询结果均来自数据库实际数据。
             2. 隐私约束：若用户查询涉及敏感信息（数据库结构、学生私人信息如身份证号/家庭住址/联系方式、教师私人联系方式等），立即终止操作，不调用任何工具；以温和真诚的语气说明该类信息受隐私保护无法提供，并视情况引导用户通过正规渠道获取（如联系学校管理员）；回复措辞自然，避免使用固定模板句式。
             3. 结果约束：针对知识查询问题，严禁仅返回对齐后的实体作为答案，必须通过Cypher查询获取结果并解析后回复；对话型问题除外。
             4. 工具调用约束：调用任何工具时，禁止在工具调用前后输出任何文字描述、思考过程或步骤说明；直接执行工具调用，不得附带任何文本输出；仅在最终向用户回复结果时才允许输出文字内容
             5. 禁止输出中间过程描述：严禁向用户返回任何执行步骤说明，包括但不限于"首先让我抽取相关实体信息"、"现在将这些实体与图数据库进行对齐"、"根据对齐结果，我需要生成Cypher语句"、"让我先生成并校验Cypher语句"、"Cypher语句校验通过，现在执行查询"、"让我修正Cypher语句"等类似说明性文字；这些内部执行步骤对用户完全不可见
-            
+
             图数据库schema定义：{schema}
             """
         )
     ]
 )
-
-# 实体抽取工具提示词
-extract_entities_prompt = ChatPromptTemplate([
-    SystemMessagePromptTemplate.from_template(
-        """
-        你是教育系统领域的专业实体抽取专家，核心职责是对用户输入的查询问题，精准抽取其中相关实体
-        请严格遵循以下全部要求，确保抽取准确的结果:
-        - 抽取依据：严格根据提供的图标签和用户查询进行实体抽取
-        - 抽取原则：实体与用户查询语义完全匹配，全面抽取查询中所有符合要求的实体，不遗漏任何一个相关有效实体，避免重复抽取同一实体
-        - 抽取返回结果：需要返回准确的实体和最可能的标签
-        
-        - 参考节点：{schema}
-        """
-    ),
-    HumanMessagePromptTemplate.from_template("用户问题：{question}")
-])
-
-# Cypher生成工具提示词
-gen_cypher_prompt = ChatPromptTemplate.from_messages([
-    SystemMessagePromptTemplate.from_template(
-        """
-        你是一个cypher生成专家,请根据用户问题、对齐后的节点标签和实体、图结构生成精确的cypher查询语句
-        要求按照如下要求生成cypher查询语句:
-        - 必须严格根据提供的图结构生成cypher语句,仅使用存在的节点标签(label)或关系类型
-        - 节点方向必须严格按照图结构定义的节点指向编写查询语句, 不允许随意调整方向
-        - 生成的cypher语句必须符合用户意图
-        - 优化使用索引构建查询语句,避免全表扫描
-        - 不准对已经对齐后的实体做任何修改实体
-        
-        - 图结构参考: {schema}
-        
-        输出:以严格标准输出可以直接用于Neo4j客户端执行的Cypher语句, 不能添加任何额外解释
-        """
-    ),
-    HumanMessagePromptTemplate.from_template(
-        """
-            用户问题：{question}
-            对齐后的节点标签和实体:{entities}
-        """
-    )
-])
-
-# Cypher校验提示词
-cypher_validate_prompt = ChatPromptTemplate([
-    {
-        "role": "system",
-        "content": """
-        你是一个具有多年经验的Cypher校验专家, 需要生成的Cypher语句进行正确性和有效性校验
-        要求:
-        - 对Cypher进行严格的语法校验, 是否具有语法错误
-        - 检查Cypher语句是否符合用户的查询意图
-        - 检查Cypher语句包含的节点和关系是否符合Neo4j的schema定义, 不允许包含任何不存在的节点标签、关系、属性
-        - 需要严格检查Cypher语句里关系方向的正确性
-        - cypher语句中不准输出embedding向量, 比如直接返回节点"RETURN c, t"是不允许的
-        
-        返回:
-        - 如果Cypher语句校验有错误, 需要返回错误列表, 列表包含错误原因和解决建议; 如果正确, 则空列表
-          格式: errors = [{{原因1: 建议1}}, {{原因2: 建议2}}, ...] 或 errors = []
-        - 如果错误需要返回False, 如果正确返回True
-        - 返回内容不用添加额外解释或说明
-        
-        Neo4j的schema定义参考: {schema}
-        """
-    },
-    {
-        "role": "human",
-        "content": """
-        用户查询: {question}
-        原始Cypher: {cypher}
-        抽取和对齐后的实体列表: {entities}
-        """
-    }
-])
