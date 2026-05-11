@@ -7,6 +7,7 @@ from backend.agent.context import EnvContext
 from backend.agent.state import OverallState
 from backend.config.constants import MAX_CORRECT_LOOPS
 from backend.core.client.llm_client import llm_chat
+from backend.core.error import classify_llm_error
 from backend.prompts.answer_prompt import direct_reply_system_prompt, max_correct_system_prompt, \
     empty_results_system_prompt, answer_system_prompt
 
@@ -23,11 +24,21 @@ async def answer(state: OverallState, runtime: Runtime[EnvContext]) -> dict:
     messages = _build_messages(state)
     logger.info(f"[answer_node][{tid}] 准备生成,分支判定完成,system 提示长度={len(messages[0].content)}")
 
-    chunks = []
-    async for chunk in llm_chat.astream(messages):
-        if chunk.content:
-            chunks.append(chunk.content)
-    final_answer = "".join(chunks)
+    # 流式调用不做重试(中途断流难续传),失败直接以用户文案兜底,保证用户始终有响应
+    try:
+        chunks = []
+        # service种chat流式输出想要将answer输出的token逐token返回，那么answer节点对llm的调用必须用astream来配合
+        async for chunk in llm_chat.astream(messages):
+            if chunk.content:
+                chunks.append(chunk.content)
+        final_answer = "".join(chunks)
+    except Exception as e:
+        classified = classify_llm_error(e)
+        final_answer = classified.user_message
+        logger.warning(
+            f"[answer_node][{tid}] 流式生成失败 reason={classified.reason.value} "
+            f"status={classified.status_code} — 返回兜底文案"
+        )
     logger.info(f"[answer_node][{tid}] 生成完成,长度={len(final_answer)}")
 
     return {"messages": [AIMessage(content=final_answer)]}

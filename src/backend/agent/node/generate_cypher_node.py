@@ -9,6 +9,7 @@ from backend.agent.state import OverallState
 from backend.core.client.llm_client import llm_cypher
 from backend.core.client.neo4j_client import graph_schema
 from backend.prompts.gen_cypher_prompt import gen_cypher_prompt
+from backend.utils.llm_retry_utils import acall_with_retry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,11 +39,15 @@ async def generate_cypher(state: OverallState, runtime: Runtime[EnvContext]) -> 
             logger.info(f"[generate_cypher_node][{tid}] 检测到校验回路,已附加错误反馈到 prompt")
 
     chain = gen_cypher_prompt | llm_cypher | StrOutputParser()
-    cypher = await chain.ainvoke({
-        "schema": graph_schema,
-        "entities": aligned_entities,
-        "question": question
-    })
+    # Cypher 是主链路关键步骤,无法降级 — 失败直接抛 LLMServiceError 由 service 层兜底
+    cypher = await acall_with_retry(
+        lambda: chain.ainvoke({
+            "schema": graph_schema,
+            "entities": aligned_entities,
+            "question": question
+        }),
+        op_name="generate_cypher",
+    )
 
     cypher = extract_cypher(cypher)
     cypher = cypher[cypher.find("MATCH"):].strip()

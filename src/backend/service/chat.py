@@ -2,9 +2,9 @@ import logging
 from typing import AsyncGenerator
 
 from langchain_core.messages import AIMessageChunk
-from openai import BadRequestError
 
 from backend.agent import graph
+from backend.core.error import LLMServiceError
 from backend.web.schema.schema import UserChat
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,6 @@ class ChatService:
             return
 
         try:
-
             async for chunk, metadata in graph.astream(
                     {
                         "messages": [{"role": "user", "content": question}],
@@ -37,15 +36,18 @@ class ChatService:
                     },
                     config={"configurable": {"thread_id": session}},
                     context={"thread_id": session},
-                    version="v2",
                     stream_mode="messages"
             ):
                 # 如果是流式调用LLM输出的chunk，并且输出节点是answer，就进行流式输出
                 if metadata["langgraph_node"] == "answer_node" and isinstance(chunk, AIMessageChunk) and chunk.content:
                     yield chunk.content
-        except BadRequestError as e:
-            logger.error(f"LLM 请求异常 - session_id: {session}, error: {e}")
-            yield "抱歉,AI 服务暂时不可用,请稍后重试。"
+        except LLMServiceError as e:
+            # 上游节点(intent/extract/generate/validate)永久失败或重试耗尽
+            logger.warning(
+                f"LLM 服务异常 - session_id: {session}, reason: {e.classified.reason.value}, "
+                f"status: {e.classified.status_code}, msg: {e.classified.message}"
+            )
+            yield e.classified.user_message
         except Exception as e:
             logger.exception(f"工作流执行异常 - session_id: {session}, error: {e}")
             yield "抱歉,系统暂时无法处理该请求,请稍后再试。"

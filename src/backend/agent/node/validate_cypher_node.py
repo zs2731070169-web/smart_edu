@@ -9,7 +9,9 @@ from backend.agent.schema.schema import ValidateCypherResult
 from backend.agent.state import OverallState
 from backend.core.client.llm_client import llm_cypher
 from backend.core.client.neo4j_client import driver, graph_schema
+from backend.core.error import LLMServiceError
 from backend.prompts.cypher_validate_prompt import cypher_validate_prompt
+from backend.utils.llm_retry_utils import acall_with_retry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,11 +50,30 @@ async def validate_cypher(state: OverallState, runtime: Runtime[EnvContext]) -> 
     # 语义校验(LLM)
     prompt = cypher_validate_prompt.format_messages(
         cypher=cypher, question=question, entities=aligned_entities, schema=graph_schema)
-    validate_result: ValidateCypherResult = await (
-        llm_cypher
-        .with_structured_output(ValidateCypherResult, method="function_calling")
-        .ainvoke(prompt)
-    )
+    try:
+        validate_result: ValidateCypherResult = await acall_with_retry(
+            lambda: llm_cypher
+            .with_structured_output(ValidateCypherResult, method="function_calling")
+            .ainvoke(prompt),
+            op_name="validate_cypher",
+        )
+    except LLMServiceError as e:
+        # 降级:语义校验失败时,鉴于语法已通过,放行让 query 阶段实际执行兜底
+        logger.warning(
+            f"[validate_cypher_node][{tid}] LLM 失败,放行已通过语法校验的 Cypher: "
+            f"reason={e.classified.reason.value}"
+        )
+        return {
+            "validates": [
+                ValidateCypherResult(
+                    errors=[],
+                    is_correct=True,
+                    error_type=ErrorTypes.NONE,
+                    suggestion="LLM 语义校验降级放行",
+                )
+            ],
+            "correct_count": correct_count + 1,
+        }
 
     logger.info(
         f"[validate_cypher_node][{tid}] 结果: is_correct={validate_result.is_correct}, errors={validate_result.errors}")

@@ -32,7 +32,7 @@ app.add_middleware(
 )
 
 # 加载静态资源（前端已分离）
-# app.mount(path="/static", app=StaticFiles(directory=WEB_DIR, html=True), name="web")
+app.mount(path="/static", app=StaticFiles(directory=WEB_DIR, html=True), name="web")
 
 app.include_router(route)
 
