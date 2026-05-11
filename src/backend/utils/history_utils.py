@@ -2,7 +2,7 @@
 import logging
 from typing import List
 
-from langchain_core.messages import AnyMessage, SystemMessage
+from langchain_core.messages import AnyMessage, SystemMessage, HumanMessage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,7 +28,9 @@ def compress_history(history: List[AnyMessage]) -> List[AnyMessage]:
     if length <= _LIGHT_MAX:
         compressed = history
     elif length <= _MEDIUM_MAX:
-        compressed = history[-_RECENT_KEEP:]
+        anchor = history[:_ANCHOR_KEEP]
+        recent = history[-_RECENT_KEEP:]
+        compressed = anchor + recent
     else:
         anchor = history[:_ANCHOR_KEEP]
         recent = history[-_RECENT_KEEP:]
@@ -56,4 +58,4 @@ def _summarize_middle(middle_message: List[AnyMessage]) -> List[AnyMessage]:
     summary = "中间轮历史用户提问摘要(仅供语境参考):\n" + "\n".join(
         f"{i}. {kp}" for i, kp in enumerate(truncate_seqs, 1)
     )
-    return [SystemMessage(content=summary)]
+    return [HumanMessage(content=summary)]
